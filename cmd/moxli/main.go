@@ -5,7 +5,9 @@ import (
 	"os"
 	"runtime"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lelopez-io/moxli/internal/session"
+	"github.com/lelopez-io/moxli/internal/tui"
 	"github.com/urfave/cli/v2"
 )
 
@@ -18,8 +20,9 @@ var (
 func main() {
 	app := &cli.App{
 		Name:    "moxli",
-		Usage:   "Bookmark management CLI",
+		Usage:   "Bookmark management TUI",
 		Version: buildVersion,
+		Action:  defaultAction,
 		Commands: []*cli.Command{
 			versionCommand(),
 			sessionTestCommand(),
@@ -30,6 +33,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func defaultAction(c *cli.Context) error {
+	// Create TUI model
+	model, err := tui.NewModel()
+	if err != nil {
+		return fmt.Errorf("failed to create TUI: %w", err)
+	}
+
+	// Start Bubble Tea program
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
 }
 
 func versionCommand() *cli.Command {
