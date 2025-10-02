@@ -1,0 +1,3 @@
+[submodule ".rio"]
+	path = .rio
+	url = git@github.com:lelopez-io/moxli-rio.git
