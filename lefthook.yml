@@ -1,0 +1,22 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+pre-stage:
+  commands:
+    fmt:
+      run: mise exec -- make fmt
+      glob: "*.go"
+
+pre-commit:
+  parallel: true
+  commands:
+    lint:
+      run: mise exec -- make lint
+      glob: "*.go"
+    test:
+      run: mise exec -- make test
+
+pre-push:
+  commands:
+    test:
+      run: mise exec -- make test

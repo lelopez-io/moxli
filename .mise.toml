@@ -1,0 +1,11 @@
+[tools]
+go = "1.24.4"
+golangci-lint = "1.64.5"
+lefthook = "1.5.5"
+
+[tasks.setup]
+run = [
+  "go install golang.org/x/tools/cmd/goimports@latest",
+  "lefthook install"
+]
+description = "Install Go tools and git hooks"
