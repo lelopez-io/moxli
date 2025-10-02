@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lelopez-io/moxli/internal/session"
 )
@@ -25,6 +26,14 @@ const (
 	newSession
 )
 
+// fileSelectionMode represents the current mode in file selection
+type fileSelectionMode int
+
+const (
+	inputMode fileSelectionMode = iota
+	selectionMode
+)
+
 // Model is the main application state
 type Model struct {
 	// Current view
@@ -37,6 +46,12 @@ type Model struct {
 
 	// Welcome screen state
 	welcomeSelected welcomeChoice
+
+	// File selection state
+	fileSelectionMode fileSelectionMode
+	pathInput         textinput.Model
+	fileDiscovery     *FileDiscovery
+	fileSelectedIdx   int
 
 	// Application state
 	// collection *bookmark.Collection // TODO: Will be used when browsing bookmarks
@@ -73,16 +88,27 @@ func NewModel() (*Model, error) {
 		sessionValid = workingDirExists && currentFileExists
 	}
 
+	// Initialize text input for path entry
+	ti := textinput.New()
+	ti.Placeholder = "Enter directory or file path (e.g., ~/Downloads)"
+	ti.CharLimit = 256
+	ti.Width = 60
+
 	model := &Model{
-		currentView:    WelcomeView,
-		sessionMgr:     sessionMgr,
-		hasSession:     hasSession && sessionValid,
-		currentSession: currentSession,
+		currentView:       WelcomeView,
+		sessionMgr:        sessionMgr,
+		hasSession:        hasSession && sessionValid,
+		currentSession:    currentSession,
+		fileSelectionMode: inputMode,
+		pathInput:         ti,
+		fileDiscovery:     NewFileDiscovery(),
+		fileSelectedIdx:   0,
 	}
 
 	// If no valid session exists, skip welcome and go straight to file selection
 	if !hasSession || !sessionValid {
 		model.currentView = FileSelectionView
+		model.pathInput.Focus()
 	}
 
 	return model, nil
@@ -158,7 +184,117 @@ func (m Model) updateWelcome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateFileSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// TODO: Implement file selection logic
+	switch m.fileSelectionMode {
+	case inputMode:
+		return m.updateFileSelectionInput(msg)
+	case selectionMode:
+		return m.updateFileSelectionList(msg)
+	}
+	return m, nil
+}
+
+func (m Model) updateFileSelectionInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	switch msg.String() {
+	case "enter":
+		// User pressed enter - scan the path
+		path := m.pathInput.Value()
+		if path != "" {
+			err := m.fileDiscovery.DiscoverPath(path)
+			if err != nil {
+				m.err = err
+				return m, nil
+			}
+
+			// If files were found, switch to selection mode
+			if len(m.fileDiscovery.Files()) > 0 {
+				m.fileSelectionMode = selectionMode
+				m.fileSelectedIdx = 0
+				m.pathInput.Blur()
+			} else {
+				m.err = fmt.Errorf("no bookmark files found in %s", path)
+			}
+		}
+		return m, nil
+
+	case "ctrl+r":
+		// Reset and allow new path
+		m.fileDiscovery.Clear()
+		m.pathInput.SetValue("")
+		m.fileSelectionMode = inputMode
+		m.pathInput.Focus()
+		m.err = nil
+		return m, nil
+	}
+
+	// Pass through to text input
+	m.pathInput, cmd = m.pathInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateFileSelectionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	files := m.fileDiscovery.Files()
+	if len(files) == 0 {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.fileSelectedIdx > 0 {
+			m.fileSelectedIdx--
+		}
+	case "down", "j":
+		if m.fileSelectedIdx < len(files)-1 {
+			m.fileSelectedIdx++
+		}
+	case " ":
+		// Toggle selection
+		files[m.fileSelectedIdx].Selected = !files[m.fileSelectedIdx].Selected
+	case "b":
+		// Mark as base (clear other base flags first)
+		for _, f := range files {
+			f.IsBase = false
+		}
+		files[m.fileSelectedIdx].IsBase = true
+		files[m.fileSelectedIdx].Selected = true
+	case "enter":
+		// Confirm selection and proceed
+		// Validate that we have at least one base and one source
+		hasBase := false
+		hasSource := false
+		for _, f := range files {
+			if f.IsBase {
+				hasBase = true
+			}
+			if f.Selected && !f.IsBase {
+				hasSource = true
+			}
+		}
+
+		if !hasBase {
+			m.err = fmt.Errorf("please mark one file as base with 'b'")
+			return m, nil
+		}
+		if !hasSource {
+			m.err = fmt.Errorf("please select at least one source file with space")
+			return m, nil
+		}
+
+		// TODO: Proceed to merge/browser view
+		m.currentView = BrowserView
+		return m, nil
+
+	case "ctrl+r":
+		// Reset and go back to path input
+		m.fileDiscovery.Clear()
+		m.pathInput.SetValue("")
+		m.fileSelectionMode = inputMode
+		m.pathInput.Focus()
+		m.err = nil
+		return m, nil
+	}
+
 	return m, nil
 }
 
@@ -226,9 +362,49 @@ func (m Model) welcomeView() string {
 }
 
 func (m Model) fileSelectionView() string {
-	s := "\n  📁 File Selection\n\n"
-	s += "  TODO: Implement file discovery and selection\n\n"
-	s += "  Press q to quit\n"
+	s := "\n"
+	s += "  ╔═══════════════════════════════════════════════════════════════════╗\n"
+	s += "  ║                     📁 File Discovery                            ║\n"
+	s += "  ╚═══════════════════════════════════════════════════════════════════╝\n"
+	s += "\n"
+
+	if m.err != nil {
+		s += fmt.Sprintf("  ⚠️  Error: %v\n\n", m.err)
+	}
+
+	switch m.fileSelectionMode {
+	case inputMode:
+		s += "  Enter a directory path or individual file path to scan for bookmarks.\n"
+		s += "  Supported formats: Anybox JSON, Firefox HTML, Safari HTML\n\n"
+		s += "  Path: " + m.pathInput.View() + "\n\n"
+		s += "  Press enter to scan  |  ctrl+r to reset  |  q to quit\n"
+
+	case selectionMode:
+		files := m.fileDiscovery.Files()
+		s += fmt.Sprintf("  Found %d bookmark file(s):\n\n", len(files))
+
+		for i, file := range files {
+			cursor := "  "
+			if i == m.fileSelectedIdx {
+				cursor = "▶ "
+			}
+
+			marker := "[ ]"
+			if file.IsBase {
+				marker = "[B]"
+			} else if file.Selected {
+				marker = "[✓]"
+			}
+
+			formatStr := string(file.Format)
+			s += fmt.Sprintf("%s%s %-8s  %s\n", cursor, marker, formatStr, file.Path)
+		}
+
+		s += "\n"
+		s += "  ↑/k: up  ↓/j: down  space: toggle  b: mark as base\n"
+		s += "  enter: continue  ctrl+r: reset  q: quit\n"
+	}
+
 	return s
 }
 
