@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lelopez-io/moxli/internal/session"
@@ -181,10 +182,31 @@ func (m Model) welcomeView() string {
 
 	if m.hasSession && m.currentSession != nil {
 		s += "  Previous session found:\n"
-		s += fmt.Sprintf("  Working Directory: %s\n", m.currentSession.WorkingDir)
-		s += fmt.Sprintf("  Current File: %s\n", m.currentSession.CurrentFile)
+
+		// Check if working directory still exists
+		workingDirExists := m.pathExists(m.currentSession.WorkingDir)
+		if workingDirExists {
+			s += fmt.Sprintf("  Working Directory: %s\n", m.currentSession.WorkingDir)
+		} else {
+			s += fmt.Sprintf("  Working Directory: %s (not found)\n", m.currentSession.WorkingDir)
+		}
+
+		// Check if current file still exists
+		currentFileExists := m.pathExists(m.currentSession.CurrentFile)
+		if currentFileExists {
+			s += fmt.Sprintf("  Current File: %s\n", m.currentSession.CurrentFile)
+		} else {
+			s += fmt.Sprintf("  Current File: %s (not found)\n", m.currentSession.CurrentFile)
+		}
+
 		s += fmt.Sprintf("  Merge History: %d records\n", len(m.currentSession.MergeHistory))
 		s += "\n"
+
+		// Warn if paths don't exist
+		if !workingDirExists || !currentFileExists {
+			s += "  ⚠️  Warning: Some session paths no longer exist\n"
+			s += "  You may want to start a new session\n\n"
+		}
 	}
 
 	s += "  What would you like to do?\n\n"
@@ -224,4 +246,13 @@ func (m Model) browserView() string {
 	s += "  TODO: Implement bookmark browsing\n\n"
 	s += "  Press q to quit\n"
 	return s
+}
+
+// pathExists checks if a file or directory exists
+func (m Model) pathExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
 }
