@@ -113,12 +113,16 @@ func (a *AnyboxHTMLImporter) Detect(r io.Reader) bool {
 		return false
 	}
 
-	// Look for Netscape Bookmark format with TAGS attribute
-	// Anybox HTML exports have TAGS attributes, Firefox/Safari don't
-	return a.hasTAGSAttribute(doc)
+	// Anybox HTML has TAGS attributes but NO folder structure (H3 tags)
+	// Firefox also supports TAGS but has nested H3 folder hierarchy
+	hasTags := a.hasTAGSAttribute(doc)
+	hasH3 := a.hasH3Tags(doc)
+
+	// Anybox: has TAGS but no H3 folder structure
+	return hasTags && !hasH3
 }
 
-// hasTAGSAttribute checks for TAGS attribute in anchor tags (Anybox-specific)
+// hasTAGSAttribute checks for TAGS attribute in anchor tags
 func (a *AnyboxHTMLImporter) hasTAGSAttribute(n *html.Node) bool {
 	if n.Type == html.ElementNode && n.Data == "a" {
 		for _, attr := range n.Attr {
@@ -130,6 +134,21 @@ func (a *AnyboxHTMLImporter) hasTAGSAttribute(n *html.Node) bool {
 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if a.hasTAGSAttribute(c) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasH3Tags checks for H3 folder structure (Firefox-specific)
+func (a *AnyboxHTMLImporter) hasH3Tags(n *html.Node) bool {
+	if n.Type == html.ElementNode && n.Data == "h3" {
+		return true
+	}
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if a.hasH3Tags(c) {
 			return true
 		}
 	}
