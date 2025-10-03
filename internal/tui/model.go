@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -182,7 +183,14 @@ func (m Model) updateWelcome(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.currentSession = sess
-			m.currentView = BrowserView // TODO: Should load the collection and go to browser
+
+			// Load the collection file from session
+			if err := m.loadCollectionFromSession(); err != nil {
+				m.err = fmt.Errorf("failed to load collection: %w", err)
+				return m, nil
+			}
+
+			m.currentView = BrowserView
 		case newSession:
 			m.currentView = FileSelectionView
 		}
@@ -498,7 +506,83 @@ func (m *Model) loadAndMergeFiles() error {
 	}
 
 	m.collection = merged
+
+	// Save session for future continuation
+	if err := m.saveSession(); err != nil {
+		// Log error but don't fail the merge
+		// User can still use the merged collection
+		return fmt.Errorf("warning: failed to save session: %w", err)
+	}
+
 	return nil
+}
+
+// loadCollectionFromSession loads the collection from the current session
+func (m *Model) loadCollectionFromSession() error {
+	if m.currentSession == nil || m.currentSession.CurrentFile == "" {
+		return fmt.Errorf("no current file in session")
+	}
+
+	// Load the collection from the current file
+	file, err := os.Open(m.currentSession.CurrentFile)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	// Assume it's Anybox JSON format (the merged output format)
+	imp := &importer.AnyboxImporter{}
+	collection, err := imp.Parse(file)
+	if err != nil {
+		return err
+	}
+
+	m.collection = collection
+	return nil
+}
+
+// saveSession saves the current session state
+func (m *Model) saveSession() error {
+	files := m.fileDiscovery.Files()
+
+	// Find base and source files
+	var baseFile *DiscoveredFile
+	var sourceFiles []*DiscoveredFile
+
+	for _, f := range files {
+		if f.IsBase {
+			baseFile = f
+		} else if f.Selected {
+			sourceFiles = append(sourceFiles, f)
+		}
+	}
+
+	if baseFile == nil {
+		return fmt.Errorf("no base file")
+	}
+
+	// Determine working directory from base file path
+	workingDir := baseFile.Path
+	if idx := strings.LastIndex(workingDir, "/"); idx >= 0 {
+		workingDir = workingDir[:idx]
+	}
+
+	// Create or update session
+	sess := &session.Session{
+		WorkingDir:  workingDir,
+		CurrentFile: baseFile.Path,
+	}
+
+	// Add merge record
+	sourcePaths := make([]string, len(sourceFiles))
+	for i, sf := range sourceFiles {
+		sourcePaths[i] = sf.Path
+	}
+
+	sess.AddMergeRecord(baseFile.Path, sourcePaths, len(m.collection.Bookmarks))
+
+	m.currentSession = sess
+	return m.sessionMgr.Save(sess)
 }
 
 // loadFile loads a bookmark file using the appropriate importer
