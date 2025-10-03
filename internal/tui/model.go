@@ -6,6 +6,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lelopez-io/moxli/internal/bookmark"
+	"github.com/lelopez-io/moxli/internal/importer"
+	"github.com/lelopez-io/moxli/internal/merge"
 	"github.com/lelopez-io/moxli/internal/session"
 )
 
@@ -53,8 +56,10 @@ type Model struct {
 	fileDiscovery     *FileDiscovery
 	fileSelectedIdx   int
 
+	// Browser state
+	collection *bookmark.Collection
+
 	// Application state
-	// collection *bookmark.Collection // TODO: Will be used when browsing bookmarks
 	width  int
 	height int
 
@@ -281,7 +286,13 @@ func (m Model) updateFileSelectionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// TODO: Proceed to merge/browser view
+		// Load and merge files
+		if err := m.loadAndMergeFiles(); err != nil {
+			m.err = fmt.Errorf("merge failed: %w", err)
+			return m, nil
+		}
+
+		// Proceed to browser view
 		m.currentView = BrowserView
 		return m, nil
 
@@ -408,9 +419,106 @@ func (m Model) fileSelectionView() string {
 	return s
 }
 
+// loadAndMergeFiles loads selected files and performs merge
+func (m *Model) loadAndMergeFiles() error {
+	files := m.fileDiscovery.Files()
+
+	// Find base and source files
+	var baseFile *DiscoveredFile
+	var sourceFiles []*DiscoveredFile
+
+	for _, f := range files {
+		if f.IsBase {
+			baseFile = f
+		} else if f.Selected {
+			sourceFiles = append(sourceFiles, f)
+		}
+	}
+
+	// Load base collection
+	baseCollection, err := m.loadFile(baseFile)
+	if err != nil {
+		return fmt.Errorf("failed to load base file: %w", err)
+	}
+
+	// Load source collections
+	sourceCollections := make([]*bookmark.Collection, 0, len(sourceFiles))
+	for _, sf := range sourceFiles {
+		coll, err := m.loadFile(sf)
+		if err != nil {
+			return fmt.Errorf("failed to load source file %s: %w", sf.Path, err)
+		}
+		sourceCollections = append(sourceCollections, coll)
+	}
+
+	// Perform merge
+	merger := merge.New(baseCollection, sourceCollections...)
+	merged, err := merger.Merge()
+	if err != nil {
+		return fmt.Errorf("merge operation failed: %w", err)
+	}
+
+	m.collection = merged
+	return nil
+}
+
+// loadFile loads a bookmark file using the appropriate importer
+func (m *Model) loadFile(f *DiscoveredFile) (*bookmark.Collection, error) {
+	file, err := os.Open(f.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var imp importer.Importer
+	switch f.Format {
+	case FormatAnybox:
+		imp = &importer.AnyboxImporter{}
+	case FormatAnyboxHTML:
+		imp = &importer.AnyboxHTMLImporter{}
+	case FormatFirefox:
+		imp = &importer.FirefoxImporter{}
+	case FormatSafari:
+		imp = &importer.SafariImporter{}
+	default:
+		return nil, fmt.Errorf("unknown format: %s", f.Format)
+	}
+
+	return imp.Parse(file)
+}
+
 func (m Model) browserView() string {
-	s := "\n  📖 Bookmark Browser\n\n"
-	s += "  Browser view not yet implemented.\n\n"
+	if m.collection == nil {
+		return "\n  📖 Bookmark Browser\n\n  No collection loaded.\n\n  Press q to quit\n"
+	}
+
+	s := "\n"
+	s += "  ╔═══════════════════════════════════════════════════════════════════╗\n"
+	s += "  ║                     📖 Bookmark Browser                          ║\n"
+	s += "  ╚═══════════════════════════════════════════════════════════════════╝\n"
+	s += "\n"
+
+	s += fmt.Sprintf("  Total bookmarks: %d\n\n", len(m.collection.Bookmarks))
+
+	// Show first 10 bookmarks for now
+	limit := 10
+	if len(m.collection.Bookmarks) < limit {
+		limit = len(m.collection.Bookmarks)
+	}
+
+	for i := 0; i < limit; i++ {
+		bm := m.collection.Bookmarks[i]
+		s += fmt.Sprintf("  • %s\n", bm.Title)
+		if bm.URL != "" {
+			s += fmt.Sprintf("    %s\n", bm.URL)
+		}
+		s += "\n"
+	}
+
+	if len(m.collection.Bookmarks) > limit {
+		s += fmt.Sprintf("  ... and %d more\n\n", len(m.collection.Bookmarks)-limit)
+	}
+
 	s += "  Press q to quit\n"
 	return s
 }
