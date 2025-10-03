@@ -14,10 +14,11 @@ import (
 type FileFormat string
 
 const (
-	FormatUnknown FileFormat = "unknown"
-	FormatAnybox  FileFormat = "anybox"
-	FormatFirefox FileFormat = "firefox"
-	FormatSafari  FileFormat = "safari"
+	FormatUnknown    FileFormat = "unknown"
+	FormatAnybox     FileFormat = "anybox"
+	FormatAnyboxHTML FileFormat = "anybox-html"
+	FormatFirefox    FileFormat = "firefox"
+	FormatSafari     FileFormat = "safari"
 )
 
 // DiscoveredFile represents a file found during discovery
@@ -137,7 +138,7 @@ func detectFileFormat(path string) (FileFormat, error) {
 
 	reader := bytes.NewReader(content)
 
-	// Try Anybox (JSON)
+	// Try Anybox JSON first
 	anyboxImporter := &importer.AnyboxImporter{}
 	if anyboxImporter.Detect(reader) {
 		return FormatAnybox, nil
@@ -148,7 +149,18 @@ func detectFileFormat(path string) (FileFormat, error) {
 		return FormatUnknown, fmt.Errorf("failed to reset reader: %w", err)
 	}
 
-	// Try Firefox (HTML with timestamps)
+	// Try Anybox HTML (has TAGS attribute - check before Firefox)
+	anyboxHTMLImporter := &importer.AnyboxHTMLImporter{}
+	if anyboxHTMLImporter.Detect(reader) {
+		return FormatAnyboxHTML, nil
+	}
+
+	// Reset reader
+	if _, err := reader.Seek(0, 0); err != nil {
+		return FormatUnknown, fmt.Errorf("failed to reset reader: %w", err)
+	}
+
+	// Try Firefox (HTML with timestamps but no TAGS attribute)
 	firefoxImporter := &importer.FirefoxImporter{}
 	if firefoxImporter.Detect(reader) {
 		return FormatFirefox, nil
