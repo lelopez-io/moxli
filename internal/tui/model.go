@@ -375,7 +375,7 @@ func (m Model) fileSelectionView() string {
 	switch m.fileSelectionMode {
 	case inputMode:
 		s += "  Enter a directory path or individual file path to scan for bookmarks.\n"
-		s += "  Supported formats: Anybox JSON, Firefox HTML, Safari HTML\n\n"
+		s += "  Supported: Anybox JSON, Anybox HTML, Firefox HTML, Safari HTML\n\n"
 		s += "  Path: " + m.pathInput.View() + "\n\n"
 		s += "  Press enter to scan  |  ctrl+r to reset  |  q to quit\n"
 
@@ -397,7 +397,7 @@ func (m Model) fileSelectionView() string {
 			}
 
 			formatStr := string(file.Format)
-			s += fmt.Sprintf("%s%s %-8s  %s\n", cursor, marker, formatStr, file.Path)
+			s += fmt.Sprintf("%s%s %-12s  %s\n", cursor, marker, formatStr, file.Path)
 		}
 
 		s += "\n"
@@ -410,10 +410,7 @@ func (m Model) fileSelectionView() string {
 
 func (m Model) browserView() string {
 	s := "\n  📖 Bookmark Browser\n\n"
-	if m.currentSession != nil {
-		s += fmt.Sprintf("  Working: %s\n\n", m.currentSession.CurrentFile)
-	}
-	s += "  TODO: Implement bookmark browsing\n\n"
+	s += "  Browser view not yet implemented.\n\n"
 	s += "  Press q to quit\n"
 	return s
 }
