@@ -4,7 +4,10 @@
 *.dll
 *.so
 *.dylib
+
+# Binary outputs from direct 'go build' (use 'make build' instead)
 /moxli
+/moxli-bin
 
 # Build directories
 dist/
