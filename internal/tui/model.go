@@ -57,7 +57,9 @@ type Model struct {
 	fileSelectedIdx   int
 
 	// Browser state
-	collection *bookmark.Collection
+	collection      *bookmark.Collection
+	browserOffset   int // Scroll offset for browser list
+	browserSelected int // Currently selected bookmark index
 
 	// Application state
 	width  int
@@ -310,8 +312,45 @@ func (m Model) updateFileSelectionList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// TODO: Implement browser navigation
+	if m.collection == nil || len(m.collection.Bookmarks) == 0 {
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.browserSelected > 0 {
+			m.browserSelected--
+			// Scroll up if needed
+			if m.browserSelected < m.browserOffset {
+				m.browserOffset = m.browserSelected
+			}
+		}
+	case "down", "j":
+		if m.browserSelected < len(m.collection.Bookmarks)-1 {
+			m.browserSelected++
+			// Scroll down if needed (show 10 items at a time)
+			if m.browserSelected >= m.browserOffset+10 {
+				m.browserOffset = m.browserSelected - 9
+			}
+		}
+	case "g":
+		// Go to top
+		m.browserSelected = 0
+		m.browserOffset = 0
+	case "G":
+		// Go to bottom
+		m.browserSelected = len(m.collection.Bookmarks) - 1
+		m.browserOffset = max(0, m.browserSelected-9)
+	}
+
 	return m, nil
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // View renders the current view
@@ -498,27 +537,42 @@ func (m Model) browserView() string {
 	s += "  ╚═══════════════════════════════════════════════════════════════════╝\n"
 	s += "\n"
 
-	s += fmt.Sprintf("  Total bookmarks: %d\n\n", len(m.collection.Bookmarks))
+	s += fmt.Sprintf("  Total: %d bookmarks | Selected: %d/%d\n\n",
+		len(m.collection.Bookmarks), m.browserSelected+1, len(m.collection.Bookmarks))
 
-	// Show first 10 bookmarks for now
-	limit := 10
-	if len(m.collection.Bookmarks) < limit {
-		limit = len(m.collection.Bookmarks)
-	}
+	// Show window of bookmarks (10 at a time)
+	pageSize := 10
+	start := m.browserOffset
+	end := min(start+pageSize, len(m.collection.Bookmarks))
 
-	for i := 0; i < limit; i++ {
+	for i := start; i < end; i++ {
 		bm := m.collection.Bookmarks[i]
-		s += fmt.Sprintf("  • %s\n", bm.Title)
+
+		// Cursor indicator
+		cursor := "  "
+		if i == m.browserSelected {
+			cursor = "▶ "
+		}
+
+		title := bm.Title
+		if title == "" {
+			title = "(no title)"
+		}
+
+		s += fmt.Sprintf("%s%s\n", cursor, title)
 		if bm.URL != "" {
 			s += fmt.Sprintf("    %s\n", bm.URL)
 		}
 		s += "\n"
 	}
 
-	if len(m.collection.Bookmarks) > limit {
-		s += fmt.Sprintf("  ... and %d more\n\n", len(m.collection.Bookmarks)-limit)
-	}
-
-	s += "  Press q to quit\n"
+	s += "  ↑/k: up  ↓/j: down  g: top  G: bottom  q: quit\n"
 	return s
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
