@@ -12,6 +12,7 @@
 # Build directories
 dist/
 build/
+bin/
 
 # Test binary, built with `go test -c`
 *.test
