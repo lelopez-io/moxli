@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -453,8 +454,8 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.browserOffset = 0
 		}
 		m.browserSelected = m.browserOffset
-	case "enter":
-		// View bookmark details
+	case " ":
+		// Toggle detail preview overlay
 		m.currentView = DetailView
 		return m, nil
 	}
@@ -464,9 +465,24 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "esc", "q":
-		// Return to browser
+	case "esc", "q", " ":
+		// Close preview overlay and return to browser
 		m.currentView = BrowserView
+		return m, nil
+	case "enter":
+		// Open URL in default browser
+		bookmarks := m.collection.Bookmarks
+		if m.filteredBookmarks != nil {
+			bookmarks = m.filteredBookmarks
+		}
+		if m.browserSelected < len(bookmarks) {
+			bm := bookmarks[m.browserSelected]
+			if bm.URL != "" {
+				// Open URL in default browser (macOS uses 'open')
+				cmd := exec.Command("open", bm.URL)
+				return m, tea.ExecProcess(cmd, nil)
+			}
+		}
 		return m, nil
 	}
 
@@ -800,11 +816,11 @@ func (m Model) browserView() string {
 
 	// Help text
 	help := `Navigation:
-  ↑/k: up           ↓/j: down
-  K: half-page up   J: half-page down
-  h: page up        H: page down
-  g: top            G: bottom
-  enter: details    /: filter
+  j/↓: down         k/↑: up
+  J: half-page down K: half-page up
+  H: page down      h: page up
+  G: bottom         g: top
+  space: preview    /: filter
 
 q: quit`
 	s.WriteString(helpStyle.Render(help))
@@ -939,7 +955,7 @@ func (m Model) detailView() string {
 	}
 
 	// Help
-	s.WriteString(helpStyle.Render("esc/q: back to browser"))
+	s.WriteString(helpStyle.Render("space/esc/q: close preview  |  enter: open in browser"))
 
 	return s.String()
 }
