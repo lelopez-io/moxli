@@ -187,10 +187,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "q":
-			// Handle q per-view (DetailView uses it to go back, others quit)
-			if m.currentView != DetailView {
-				return m, tea.Quit
-			}
+			// q always quits from any view
+			return m, tea.Quit
 		}
 
 		// Handle view-specific key presses
@@ -472,7 +470,7 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case " ", "q":
+	case " ":
 		// Close preview overlay and return to browser
 		m.currentView = BrowserView
 		return m, nil
@@ -962,7 +960,7 @@ func (m Model) detailView() string {
 	}
 
 	// Help
-	s.WriteString(helpStyle.Render("space/q: close preview  |  enter: open in browser"))
+	s.WriteString(helpStyle.Render("space: close preview  |  enter: open in browser  |  q: quit"))
 
 	return s.String()
 }
