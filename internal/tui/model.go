@@ -508,6 +508,11 @@ func min(a, b int) int {
 	return b
 }
 
+// renderKeybindings renders a consistent keybinding help section
+func renderKeybindings(bindings string) string {
+	return helpStyle.Render(bindings)
+}
+
 // View renders the current view
 func (m Model) View() string {
 	switch m.currentView {
@@ -563,7 +568,9 @@ func (m Model) welcomeView() string {
 	}
 
 	s += "\n"
-	s += "  ↑/k: up  ↓/j: down  enter: select  q: quit\n"
+	help := `j/k: down/up  enter: select  q: quit`
+	s += renderKeybindings(help)
+	s += "\n"
 
 	return s
 }
@@ -608,8 +615,10 @@ func (m Model) fileSelectionView() string {
 		}
 
 		s += "\n"
-		s += "  ↑/k: up  ↓/j: down  space: toggle  b: mark as base\n"
-		s += "  enter: continue  ctrl+r: reset  q: quit\n"
+		help := `j/k: down/up  space: toggle  b: mark as base
+enter: continue  ctrl+r: reset  q: quit`
+		s += renderKeybindings(help)
+		s += "\n"
 	}
 
 	return s
@@ -789,7 +798,8 @@ func (m Model) browserView() string {
 	// Filter input (if active)
 	if m.filterMode {
 		s.WriteString("\n  " + m.filterInput.View() + "\n")
-		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("enter: apply  esc: cancel") + "\n")
+		s.WriteString(renderKeybindings("enter: apply  esc: cancel"))
+		s.WriteString("\n")
 	}
 	s.WriteString("\n")
 
@@ -821,14 +831,13 @@ func (m Model) browserView() string {
 
 	// Help text
 	help := `Navigation:
-  j/↓: down         k/↑: up
+  j: down           k: up
   J: half-page down K: half-page up
   H: page down      h: page up
   G: bottom         g: top
-  space: preview    /: filter
 
-q: quit`
-	s.WriteString(helpStyle.Render(help))
+space: preview  /: filter  q: quit`
+	s.WriteString(renderKeybindings(help))
 
 	return s.String()
 }
@@ -960,7 +969,7 @@ func (m Model) detailView() string {
 	}
 
 	// Help
-	s.WriteString(helpStyle.Render("space: close preview  |  enter: open in browser  |  q: quit"))
+	s.WriteString(renderKeybindings("space: close preview  enter: open in browser  q: quit"))
 
 	return s.String()
 }
