@@ -7,10 +7,39 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lelopez-io/moxli/internal/bookmark"
 	"github.com/lelopez-io/moxli/internal/importer"
 	"github.com/lelopez-io/moxli/internal/merge"
 	"github.com/lelopez-io/moxli/internal/session"
+)
+
+// Lipgloss styles
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("205")).
+			Padding(0, 1)
+
+	headerStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(0, 1)
+
+	selectedItemStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("170")).
+				Bold(true)
+
+	urlStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Italic(true)
+
+	helpStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Padding(1, 0, 0, 2)
+
+	statStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("63"))
 )
 
 // View represents the different screens in the TUI
@@ -20,6 +49,7 @@ const (
 	WelcomeView View = iota
 	FileSelectionView
 	BrowserView
+	DetailView
 )
 
 // welcomeChoice represents the user's selection on the welcome screen
@@ -58,9 +88,12 @@ type Model struct {
 	fileSelectedIdx   int
 
 	// Browser state
-	collection      *bookmark.Collection
-	browserOffset   int // Scroll offset for browser list
-	browserSelected int // Currently selected bookmark index
+	collection       *bookmark.Collection
+	browserOffset    int // Scroll offset for browser list
+	browserSelected  int // Currently selected bookmark index
+	filterMode       bool
+	filterInput      textinput.Model
+	filteredBookmarks []*bookmark.Bookmark
 
 	// Application state
 	width  int
@@ -102,6 +135,12 @@ func NewModel() (*Model, error) {
 	ti.CharLimit = 256
 	ti.Width = 60
 
+	// Initialize filter input
+	filterTI := textinput.New()
+	filterTI.Placeholder = "Search bookmarks..."
+	filterTI.CharLimit = 100
+	filterTI.Width = 60
+
 	model := &Model{
 		currentView:       WelcomeView,
 		sessionMgr:        sessionMgr,
@@ -109,6 +148,7 @@ func NewModel() (*Model, error) {
 		currentSession:    currentSession,
 		fileSelectionMode: inputMode,
 		pathInput:         ti,
+		filterInput:       filterTI,
 		fileDiscovery:     NewFileDiscovery(),
 		fileSelectedIdx:   0,
 	}
@@ -153,6 +193,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateFileSelection(msg)
 		case BrowserView:
 			return m.updateBrowser(msg)
+		case DetailView:
+			return m.updateDetail(msg)
 		}
 
 	case tea.WindowSizeMsg:
@@ -324,7 +366,48 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle filter mode
+	if m.filterMode {
+		switch msg.String() {
+		case "esc":
+			// Exit filter mode
+			m.filterMode = false
+			m.filterInput.Blur()
+			m.filterInput.SetValue("")
+			m.filteredBookmarks = nil
+			m.browserSelected = 0
+			m.browserOffset = 0
+			return m, nil
+		case "enter":
+			// Apply filter
+			m.filterMode = false
+			m.filterInput.Blur()
+			m.applyFilter()
+			return m, nil
+		default:
+			// Update filter input
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Get current bookmark list (filtered or full)
+	bookmarks := m.collection.Bookmarks
+	if m.filteredBookmarks != nil {
+		bookmarks = m.filteredBookmarks
+	}
+	bookmarkCount := len(bookmarks)
+
+	pageSize := 10
+	halfPage := pageSize / 2
+
 	switch msg.String() {
+	case "/":
+		// Enter filter mode
+		m.filterMode = true
+		m.filterInput.Focus()
+		return m, nil
 	case "up", "k":
 		if m.browserSelected > 0 {
 			m.browserSelected--
@@ -334,11 +417,11 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "down", "j":
-		if m.browserSelected < len(m.collection.Bookmarks)-1 {
+		if m.browserSelected < bookmarkCount-1 {
 			m.browserSelected++
 			// Scroll down if needed (show 10 items at a time)
-			if m.browserSelected >= m.browserOffset+10 {
-				m.browserOffset = m.browserSelected - 9
+			if m.browserSelected >= m.browserOffset+pageSize {
+				m.browserOffset = m.browserSelected - (pageSize - 1)
 			}
 		}
 	case "g":
@@ -347,8 +430,44 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.browserOffset = 0
 	case "G":
 		// Go to bottom
-		m.browserSelected = len(m.collection.Bookmarks) - 1
-		m.browserOffset = max(0, m.browserSelected-9)
+		m.browserSelected = bookmarkCount - 1
+		m.browserOffset = max(0, m.browserSelected-(pageSize-1))
+	case "J":
+		// Scroll down half page (Shift-J for bigger jump)
+		m.browserSelected = min(m.browserSelected+halfPage, bookmarkCount-1)
+		// Center the selection in the window
+		m.browserOffset = max(0, min(m.browserSelected-(pageSize/2), bookmarkCount-pageSize))
+	case "K":
+		// Scroll up half page (Shift-K for bigger jump)
+		m.browserSelected = max(0, m.browserSelected-halfPage)
+		// Center the selection in the window
+		m.browserOffset = max(0, min(m.browserSelected-(pageSize/2), bookmarkCount-pageSize))
+	case "h":
+		// Scroll up full page - land at top of new page
+		m.browserOffset = max(0, m.browserOffset-pageSize)
+		m.browserSelected = m.browserOffset
+	case "H":
+		// Scroll down full page - land at top of new page
+		m.browserOffset = min(m.browserOffset+pageSize, bookmarkCount-pageSize)
+		if m.browserOffset < 0 {
+			m.browserOffset = 0
+		}
+		m.browserSelected = m.browserOffset
+	case "enter":
+		// View bookmark details
+		m.currentView = DetailView
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		// Return to browser
+		m.currentView = BrowserView
+		return m, nil
 	}
 
 	return m, nil
@@ -356,6 +475,13 @@ func (m Model) updateBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
@@ -370,6 +496,8 @@ func (m Model) View() string {
 		return m.fileSelectionView()
 	case BrowserView:
 		return m.browserView()
+	case DetailView:
+		return m.detailView()
 	default:
 		return "Unknown view"
 	}
@@ -612,51 +740,206 @@ func (m *Model) loadFile(f *DiscoveredFile) (*bookmark.Collection, error) {
 
 func (m Model) browserView() string {
 	if m.collection == nil {
-		return "\n  📖 Bookmark Browser\n\n  No collection loaded.\n\n  Press q to quit\n"
+		return "\n" + titleStyle.Render("📖 Bookmark Browser") + "\n\n  No collection loaded.\n\n  Press q to quit\n"
 	}
 
-	s := "\n"
-	s += "  ╔═══════════════════════════════════════════════════════════════════╗\n"
-	s += "  ║                     📖 Bookmark Browser                          ║\n"
-	s += "  ╚═══════════════════════════════════════════════════════════════════╝\n"
-	s += "\n"
+	var s strings.Builder
 
-	s += fmt.Sprintf("  Total: %d bookmarks | Selected: %d/%d\n\n",
-		len(m.collection.Bookmarks), m.browserSelected+1, len(m.collection.Bookmarks))
+	// Header
+	s.WriteString("\n")
+	s.WriteString(headerStyle.Render("📖 Bookmark Browser"))
+	s.WriteString("\n\n")
+
+	// Determine which bookmarks to show
+	bookmarks := m.collection.Bookmarks
+	if m.filteredBookmarks != nil {
+		bookmarks = m.filteredBookmarks
+	}
+
+	// Stats
+	stats := fmt.Sprintf("Total: %d bookmarks │ Selected: %d/%d",
+		len(bookmarks), m.browserSelected+1, len(bookmarks))
+	if m.filteredBookmarks != nil {
+		stats = fmt.Sprintf("Filtered: %d/%d bookmarks │ Selected: %d/%d",
+			len(m.filteredBookmarks), len(m.collection.Bookmarks), m.browserSelected+1, len(bookmarks))
+	}
+	s.WriteString("  " + statStyle.Render(stats) + "\n")
+
+	// Filter input (if active)
+	if m.filterMode {
+		s.WriteString("\n  " + m.filterInput.View() + "\n")
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("enter: apply  esc: cancel") + "\n")
+	}
+	s.WriteString("\n")
 
 	// Show window of bookmarks (10 at a time)
 	pageSize := 10
 	start := m.browserOffset
-	end := min(start+pageSize, len(m.collection.Bookmarks))
+	end := min(start+pageSize, len(bookmarks))
 
 	for i := start; i < end; i++ {
-		bm := m.collection.Bookmarks[i]
-
-		// Cursor indicator
-		cursor := "  "
-		if i == m.browserSelected {
-			cursor = "▶ "
-		}
+		bm := bookmarks[i]
 
 		title := bm.Title
 		if title == "" {
 			title = "(no title)"
 		}
 
-		s += fmt.Sprintf("%s%s\n", cursor, title)
-		if bm.URL != "" {
-			s += fmt.Sprintf("    %s\n", bm.URL)
+		// Render item
+		if i == m.browserSelected {
+			s.WriteString("  ▶ " + selectedItemStyle.Render(title) + "\n")
+		} else {
+			s.WriteString("    " + title + "\n")
 		}
-		s += "\n"
+
+		if bm.URL != "" {
+			s.WriteString("      " + urlStyle.Render(bm.URL) + "\n")
+		}
+		s.WriteString("\n")
 	}
 
-	s += "  ↑/k: up  ↓/j: down  g: top  G: bottom  q: quit\n"
-	return s
+	// Help text
+	help := `Navigation:
+  ↑/k: up           ↓/j: down
+  K: half-page up   J: half-page down
+  h: page up        H: page down
+  g: top            G: bottom
+  enter: details    /: filter
+
+q: quit`
+	s.WriteString(helpStyle.Render(help))
+
+	return s.String()
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+// applyFilter filters bookmarks based on search query
+func (m *Model) applyFilter() {
+	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+	if query == "" {
+		m.filteredBookmarks = nil
+		return
 	}
-	return b
+
+	var filtered []*bookmark.Bookmark
+	for _, bm := range m.collection.Bookmarks {
+		// Search in title, URL, description, tags
+		if strings.Contains(strings.ToLower(bm.Title), query) ||
+			strings.Contains(strings.ToLower(bm.URL), query) ||
+			strings.Contains(strings.ToLower(bm.Description), query) ||
+			strings.Contains(strings.ToLower(bm.Comment), query) ||
+			m.matchesTag(bm, query) {
+			filtered = append(filtered, bm)
+		}
+	}
+
+	m.filteredBookmarks = filtered
+	m.browserSelected = 0
+	m.browserOffset = 0
+}
+
+// matchesTag checks if any tag contains the query
+func (m *Model) matchesTag(bm *bookmark.Bookmark, query string) bool {
+	for _, tagHierarchy := range bm.Tags {
+		for _, tag := range tagHierarchy {
+			if strings.Contains(strings.ToLower(tag), query) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m Model) detailView() string {
+	if m.collection == nil || len(m.collection.Bookmarks) == 0 {
+		return "\nNo bookmark selected\n\nPress esc to return"
+	}
+
+	// Get bookmark from filtered list if active
+	bookmarks := m.collection.Bookmarks
+	if m.filteredBookmarks != nil {
+		bookmarks = m.filteredBookmarks
+	}
+
+	if m.browserSelected >= len(bookmarks) {
+		return "\nNo bookmark selected\n\nPress esc to return"
+	}
+
+	bm := bookmarks[m.browserSelected]
+	var s strings.Builder
+
+	// Header
+	s.WriteString("\n")
+	s.WriteString(headerStyle.Render("📑 Bookmark Details"))
+	s.WriteString("\n\n")
+
+	// Title
+	title := bm.Title
+	if title == "" {
+		title = "(no title)"
+	}
+	s.WriteString("  " + selectedItemStyle.Render(title) + "\n\n")
+
+	// URL
+	if bm.URL != "" {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("URL:") + "\n")
+		s.WriteString("  " + urlStyle.Render(bm.URL) + "\n\n")
+	}
+
+	// Description
+	if bm.Description != "" {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Description:") + "\n")
+		s.WriteString("  " + bm.Description + "\n\n")
+	}
+
+	// Comment
+	if bm.Comment != "" {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Comment:") + "\n")
+		s.WriteString("  " + bm.Comment + "\n\n")
+	}
+
+	// Tags
+	if len(bm.Tags) > 0 {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Tags:") + "\n")
+		for _, tagHierarchy := range bm.Tags {
+			tagStr := strings.Join(tagHierarchy, " → ")
+			s.WriteString("    • " + lipgloss.NewStyle().Foreground(lipgloss.Color("170")).Render(tagStr) + "\n")
+		}
+		s.WriteString("\n")
+	}
+
+	// Folder
+	if len(bm.Folder) > 0 {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Folder:") + "\n")
+		folderStr := strings.Join(bm.Folder, " / ")
+		s.WriteString("    📁 " + folderStr + "\n\n")
+	}
+
+	// Dates
+	if !bm.DateAdded.IsZero() {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Date Added:") + "\n")
+		s.WriteString("    " + bm.DateAdded.Format("2006-01-02 15:04:05") + "\n\n")
+	}
+
+	if !bm.LastModified.IsZero() {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Last Modified:") + "\n")
+		s.WriteString("    " + bm.LastModified.Format("2006-01-02 15:04:05") + "\n\n")
+	}
+
+	// Metadata
+	if bm.IsStarred {
+		s.WriteString("  ⭐ Starred\n\n")
+	}
+
+	if bm.Keyword != "" {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Keyword:") + " " + bm.Keyword + "\n\n")
+	}
+
+	if bm.Source != "" {
+		s.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("Source:") + " " + bm.Source + "\n\n")
+	}
+
+	// Help
+	s.WriteString(helpStyle.Render("esc/q: back to browser"))
+
+	return s.String()
 }
